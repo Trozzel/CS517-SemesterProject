@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
-use thiserror::Error;
+use std::usize;
 pub type MyErr = Box<dyn std::error::Error + Sync + Send + 'static>;
 pub type MyRes<T> = Result<T, MyErr>;
 
@@ -29,19 +29,10 @@ pub struct TemperatureLine {
     pub readings: TempRow,
 }
 
-#[derive(Debug, Error)]
-pub enum ParseError {
-    #[error(transparent)]
-    IOError(#[from] std::io::Error),
-}
-
 //------------------------------------------------------------------------------
 const TIME_STEP_SIZE: u64 = 30;
 
-//const LINE_DELIM_RE: LazyCell<Regex> =
-//    LazyCell::new(|| Regex::new(r"[^0-9]*\s+|[^0-9]*$").unwrap());
-
-pub fn read_temperature_file(filename: &str) -> Result<Vec<TemperatureLine>, ParseError> {
+pub fn read_temperature_file(filename: &str) -> MyRes<Vec<TemperatureLine>> {
     let file = File::open(filename)?;
     let reader = BufReader::new(file);
 
@@ -49,7 +40,7 @@ pub fn read_temperature_file(filename: &str) -> Result<Vec<TemperatureLine>, Par
     read_temperatures(reader)
 }
 
-pub fn read_temperatures<R>(reader: R) -> Result<Vec<TemperatureLine>, ParseError>
+pub fn read_temperatures<R>(reader: R) -> MyRes<Vec<TemperatureLine>>
 where
     R: BufRead,
 {
@@ -82,96 +73,59 @@ impl Display for TempPoint {
     }
 }
 
-pub struct CoreTemp {
-    pub core_id: u8,
-    pub points: Vec<TempPoint>,
-}
+// CORE TEMPS
+//****************************************************************************//
+pub struct CoreTemps<const N: usize>([Vec<TempPoint>; N]);
 
-pub struct AllCores(
-    pub Vec<TempPoint>,
-    pub Vec<TempPoint>,
-    pub Vec<TempPoint>,
-    pub Vec<TempPoint>,
-);
+impl<const N: usize> CoreTemps<N> {
+    pub fn new() -> Self {
+        CoreTemps(std::array::from_fn(|_| Vec::new()))
+    }
 
-impl AllCores {
-    pub fn description(&self) -> String {
-        let len = self.0.len();
-        let max0 = self.0.iter().map(|p| p.temp_c).fold(f64::MIN, f64::max);
-        let max1 = self.1.iter().map(|p| p.temp_c).fold(f64::MIN, f64::max);
-        let max2 = self.2.iter().map(|p| p.temp_c).fold(f64::MIN, f64::max);
-        let max3 = self.3.iter().map(|p| p.temp_c).fold(f64::MIN, f64::max);
-        let avg0 = self
-            .0
-            .iter()
-            .map(|p| p.temp_c)
-            .fold(0.0, |n1: f64, n2: f64| (n1 + n2))
-            / len as f64;
-        let avg1 = self
-            .1
-            .iter()
-            .map(|p| p.temp_c)
-            .fold(0.0, |n1: f64, n2: f64| (n1 + n2))
-            / len as f64;
-        let avg2 = self
-            .2
-            .iter()
-            .map(|p| p.temp_c)
-            .fold(0.0, |n1: f64, n2: f64| (n1 + n2))
-            / len as f64;
-        let avg3 = self
-            .3
-            .iter()
-            .map(|p| p.temp_c)
-            .fold(0.0, |n1: f64, n2: f64| (n1 + n2))
-            / len as f64;
+    pub fn get_vec(&self, idx: usize) -> MyRes<&Vec<TempPoint>> {
+        Ok(&self.get_vecs()[idx])
+    }
 
-        let t0avg = self.0.iter().map(|p| p.time_s).fold(0, |n0, n1| n0 + n1) / len as u64;
-        let t1avg = self.1.iter().map(|p| p.time_s).fold(1, |n1, n1| n1 + n1) / len as u64;
-        let t2avg = self.2.iter().map(|p| p.time_s).fold(2, |n2, n1| n2 + n1) / len as u64;
-        let t3avg = self.3.iter().map(|p| p.time_s).fold(3, |n3, n1| n3 + n1) / len as u64;
+    pub fn get_mut_vec(&mut self, idx: usize) -> MyRes<&Vec<TempPoint>> {
+        Ok(&mut self.0[idx])
+    }
 
-        format!(
-            "Len: {}\nMax temps: {:.2}°C, {:.2}°C, {:.2}°C, {:.2}°C\nAvg temps: {:.2}°C, {:.2}°C, {:.2}°C, {:.2}°C",
-            len,
-            max0,
-            max1,
-            max2,
-            max3,
-            avg0,
-            avg1,
-            avg2,
-            avg3
-        )
+    pub fn get_vecs(&self) -> &[Vec<TempPoint>] {
+        &self.0
+    }
+
+    pub fn get_mut_vecs(&mut self) -> &mut [Vec<TempPoint>] {
+        &mut self.0
+    }
+
+    pub fn size(&self) -> MyRes<(usize, usize)> {
+        Ok((N, self.get_vec(0)?.len()))
+    }
+
+    pub fn describe(&self) -> MyRes<String> {
+        Ok(format!("Size: ({}x{})", self.size()?.0, self.size()?.1))
     }
 }
 
-pub fn split_into_cores(orig_data: Vec<TemperatureLine>) -> MyRes<AllCores> {
-    let len = orig_data.len();
-    let mut all_cores = AllCores(
-        Vec::with_capacity(len),
-        Vec::with_capacity(len),
-        Vec::with_capacity(len),
-        Vec::with_capacity(len),
-    );
+pub fn split_into_cores<const N: usize>(orig_data: Vec<TemperatureLine>) -> MyRes<CoreTemps<N>> {
+    let mut ncore_temps = CoreTemps::<N>::new();
+
     for line in orig_data {
-        all_cores.0.push(TempPoint {
-            time_s: line.time_step,
-            temp_c: line.readings.0,
-        });
-        all_cores.1.push(TempPoint {
-            time_s: line.time_step,
-            temp_c: line.readings.1,
-        });
-        all_cores.2.push(TempPoint {
-            time_s: line.time_step,
-            temp_c: line.readings.2,
-        });
-        all_cores.3.push(TempPoint {
-            time_s: line.time_step,
-            temp_c: line.readings.3,
-        });
+        for core in ncore_temps.get_mut_vecs() {
+            core.push(TempPoint {
+                time_s: line.time_step,
+                temp_c: line.readings.0,
+            });
+        }
     }
 
-    Ok(all_cores)
+    Ok(ncore_temps)
+}
+
+pub fn interpolate(arr: &[TempPoint]) -> Vec<f64> {
+    let f_interp: Box<dyn Fn(&[TempPoint]) -> f64> = Box::new(|tpt: &[TempPoint]| -> f64 {
+        (tpt[1].temp_c - tpt[0].temp_c) / (tpt[1].time_s as f64 - tpt[0].time_s as f64)
+    });
+
+    arr.windows(2).map(|tpt| f_interp(tpt)).collect()
 }
