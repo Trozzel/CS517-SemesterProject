@@ -1,22 +1,29 @@
-use temperature_parser::{read_temperature_file, MyRes, split_into_cores, interpolate};
+use std::path::PathBuf;
+use std::fs;
+use std::io::Read;
+use std::str::FromStr;
 
-fn main() -> MyRes<()> {
+use temperature_parser::temp_mat::{TempMat, write_temp_output};
+
+const TIME_STEP_SIZE: f64 = 30.0;
+const NUM_CORES: usize = 4;
+
+fn main() -> anyhow::Result<()> {
     let fname = std::env::args()
-        .nth(3)
-        .unwrap_or("Data/sensors-2018.12.26-no-labels.txt".to_string());
+        .last()
+        .expect("Usage: cargo run <filename>");
 
-    println!("The file: {}", &fname);
-    println!("Full path: {:?}", std::path::absolute(&fname));
+    let mut content = String::new();
+    fs::File::open(&fname)?.read_to_string(&mut content)?;
+    let tm = TempMat::<NUM_CORES>::from_str(content.as_str())?;
 
-    let data = read_temperature_file(fname.as_str())?;
+    println!("Shape of original: {}", tm.shape());
 
-    let all_cores = split_into_cores::<4>(data)?;
+    let interp = tm.interp(TIME_STEP_SIZE);
+    println!("Shape of interpolated: {}", interp.shape());
 
-    println!("INTERPOLATING...");
-
-    let interp = interpolate(all_cores.get_vec(0).unwrap().as_slice());
-
-    println!("all_cores.len(): {}, interp.len(): {}", all_cores.size().unwrap().1, interp.len());
+    let fpath = PathBuf::from(fname);
+    write_temp_output(&tm, &interp, TIME_STEP_SIZE, &fpath)?;
 
     Ok(())
 }
