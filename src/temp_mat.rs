@@ -123,6 +123,8 @@ pub fn write_temp_output<const N: usize>(
 }
 
 // Create the file name for new contents
+// TODO: rework the logic of creating the modified files names.
+// The base path should be taken once instead of N times
 fn get_new_fname(orig_path: &Path, core_num: usize) -> anyhow::Result<PathBuf> {
     let basepath = match orig_path.parent() {
         Some(parent) => PathBuf::from(parent),
